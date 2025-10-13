@@ -10,7 +10,7 @@
 //! ```rust
 //! # #[cfg(target_os = "linux")]
 //! # mod linux {
-//! use auto_launch::{AutoLaunch, LinuxLaunchMode};
+//! use auto_launcher::{AutoLaunch, LinuxLaunchMode};
 //!
 //! fn main() {
 //!     let app_name = "the-app";
@@ -44,7 +44,7 @@
 //! ```rust
 //! # #[cfg(target_os = "macos")]
 //! # mod macos {
-//! use auto_launch::{AutoLaunch, MacOSLaunchMode};
+//! use auto_launcher::{AutoLaunch, MacOSLaunchMode};
 //!
 //! fn main() {
 //!     let app_name = "the-app";
@@ -77,7 +77,7 @@
 //! ```rust
 //! # #[cfg(target_os = "windows")]
 //! # mod win {
-//! use auto_launch::{AutoLaunch, WindowsEnableMode};
+//! use auto_launcher::{AutoLaunch, WindowsEnableMode};
 //!
 //! fn main() {
 //!     let app_name = "the-app";
@@ -103,7 +103,7 @@
 //! on various platforms.
 //!
 //! ```rust
-//! use auto_launch::*;
+//! use auto_launcher::*;
 //!
 //! # fn example() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //! let auto = AutoLaunchBuilder::new()
@@ -157,7 +157,7 @@ mod windows;
 /// ```rust
 /// # #[cfg(target_os = "linux")]
 /// # {
-/// # use auto_launch::{AutoLaunch, LinuxLaunchMode};
+/// # use auto_launcher::{AutoLaunch, LinuxLaunchMode};
 /// # let app_name = "the-app";
 /// # let app_path = "/path/to/the-app";
 /// # let launch_mode = LinuxLaunchMode::XdgAutostart;
@@ -171,7 +171,7 @@ mod windows;
 /// ```rust
 /// # #[cfg(target_os = "macos")]
 /// # {
-/// # use auto_launch::{AutoLaunch, MacOSLaunchMode};
+/// # use auto_launcher::{AutoLaunch, MacOSLaunchMode};
 /// # let app_name = "the-app";
 /// # let app_path = "/path/to/the-app";
 /// # let launch_mode = MacOSLaunchMode::LaunchAgent;
@@ -186,7 +186,7 @@ mod windows;
 /// ```rust
 /// # #[cfg(target_os = "windows")]
 /// # {
-/// # use auto_launch::{AutoLaunch, WindowsEnableMode};
+/// # use auto_launcher::{AutoLaunch, WindowsEnableMode};
 /// # let app_name = "the-app";
 /// # let app_path = "/path/to/the-app";
 /// # let args = &["--minimized"];
@@ -231,7 +231,7 @@ impl AutoLaunch {
     /// ## Usage
     ///
     /// ```rust
-    /// use auto_launch::AutoLaunch;
+    /// use auto_launcher::AutoLaunch;
     ///
     /// dbg!(AutoLaunch::is_support());
     /// ```
@@ -270,7 +270,7 @@ impl AutoLaunch {
 /// ## Usage
 ///
 /// ```rust
-/// use auto_launch::*;
+/// use auto_launcher::*;
 ///
 /// # fn example() -> std::result::Result<(), Box<dyn std::error::Error>> {
 /// let auto = AutoLaunchBuilder::new()

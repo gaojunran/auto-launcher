@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod unit_test {
     #[cfg(target_os = "macos")]
-    use auto_launch::AutoLaunch;
+    use auto_launcher::AutoLaunch;
     #[cfg(not(target_os = "macos"))]
-    use auto_launch::{AutoLaunch, AutoLaunchBuilder};
+    use auto_launcher::{AutoLaunch, AutoLaunchBuilder};
     use std::env::current_dir;
 
     pub fn get_test_bin(name: &str) -> String {
@@ -55,7 +55,7 @@ mod unit_test {
 #[cfg(test)]
 mod windows_unit_test {
     use crate::unit_test::*;
-    use auto_launch::{AutoLaunch, WindowsEnableMode};
+    use auto_launcher::{AutoLaunch, WindowsEnableMode};
     use windows_registry::{Key as RegKey, CURRENT_USER, LOCAL_MACHINE};
 
     const TASK_MANAGER_OVERRIDE_REGKEY: &str =
@@ -187,11 +187,11 @@ mod windows_unit_test {
 #[cfg(test)]
 mod macos_unit_test {
     use crate::unit_test::*;
-    use auto_launch::{AutoLaunch, AutoLaunchBuilder};
+    use auto_launcher::{AutoLaunch, AutoLaunchBuilder};
 
     #[test]
     fn test_macos_new() {
-        use auto_launch::MacOSLaunchMode;
+        use auto_launcher::MacOSLaunchMode;
 
         let name_1 = "AutoLaunchTest"; // different name
         let name_2 = "auto-launch-test"; // same name
@@ -246,7 +246,7 @@ mod macos_unit_test {
 
     #[test]
     fn test_macos_main() {
-        use auto_launch::MacOSLaunchMode;
+        use auto_launcher::MacOSLaunchMode;
 
         let app_name = "auto-launch-test";
         let app_path = get_test_bin("auto-launch-test");
@@ -351,11 +351,11 @@ mod macos_unit_test {
 #[cfg(test)]
 mod linux_unit_test {
     use crate::unit_test::*;
-    use auto_launch::AutoLaunch;
+    use auto_launcher::AutoLaunch;
 
     #[test]
     fn test_linux() {
-        use auto_launch::LinuxLaunchMode;
+        use auto_launcher::LinuxLaunchMode;
 
         let app_name = "AutoLaunchTest";
         let app_path = get_test_bin("auto-launch-test");

@@ -1,12 +1,13 @@
-# Auto Launch
+# Auto Launcher
 
-[![Crates.io](https://img.shields.io/crates/v/auto-launch)](https://crates.io/crates/auto-launch)
-[![API reference](https://img.shields.io/docsrs/auto-launch/latest)](https://docs.rs/auto-launch/)
-[![License](https://img.shields.io/crates/l/auto-launch)](./LICENSE)
+> [!NOTE]
+> This crate was forked from [zzzgydi/auto-launch](https://crates.io/crates/auto-launch), adding more platforms support and features.
 
-Auto launch any application or executable at startup. Supports Windows, Mac (via AppleScript or Launch Agent), and Linux.
+[![Crates.io](https://img.shields.io/crates/v/auto-launcher)](https://crates.io/crates/auto-launcher)
+[![API reference](https://img.shields.io/docsrs/auto-launcher/latest)](https://docs.rs/auto-launcher/)
+[![License](https://img.shields.io/crates/l/auto-launcher)](./LICENSE)
 
-How does it work? See [Teamwork/node-auto-launch](https://github.com/Teamwork/node-auto-launch#how-does-it-work) for details.
+Auto launch any application or executable at startup. Supports Windows, macOS, and Linux.
 
 If you find any bugs, welcome to PR or issue.
 
@@ -18,7 +19,7 @@ See the function definition or the demo below for details.
 `AutoLaunchBuilder` helps to eliminate the constructor difference on various platforms.
 
 ```rust
-use auto_launch::*;
+use auto_launcher::*;
 
 fn main() {
     let auto = AutoLaunchBuilder::new()
@@ -43,7 +44,7 @@ Linux supports two ways to achieve auto launch:
 - **systemd**: Uses systemd user services in `~/.config/systemd/user/`
 
 ```rust
-use auto_launch::{AutoLaunch, LinuxLaunchMode};
+use auto_launcher::{AutoLaunch, LinuxLaunchMode};
 
 fn main() {
     let app_name = "the-app";
@@ -78,7 +79,7 @@ macOS supports two ways to achieve auto launch:
 - In case using AppleScript, only `--hidden` and `--minimized` in `args` are valid, which means that hide the app on launch.
 
 ```rust
-use auto_launch::{AutoLaunch, MacOSLaunchMode};
+use auto_launcher::{AutoLaunch, MacOSLaunchMode};
 
 fn main() {
     let app_name = "the-app";
@@ -107,7 +108,7 @@ On Windows, it will add registry entries under `\HKEY_CURRENT_USER\SOFTWARE\Micr
 It will also detect if startup is disabled inside Task Manager or the Windows settings UI, and can re-enable after being disabled in one of those.
 
 ```rust
-use auto_launch::AutoLaunch;
+use auto_launcher::AutoLaunch;
 
 fn main() {
     let app_name = "the-app";
@@ -127,7 +128,3 @@ fn main() {
 ## License
 
 MIT License. See the [License](./LICENSE) file for details.
-
-## Acknowledgement
-
-The project is based on [node-auto-launch](https://github.com/Teamwork/node-auto-launch).
