@@ -16,7 +16,7 @@
 //!     let app_name = "the-app";
 //!     let app_path = "/path/to/the-app";
 //!     let args = &["--minimized"];
-//!     // Use XDG Autostart by default, or use LinuxLaunchMode::Systemd for systemd
+//!     // Use XDG Autostart by default, or use LinuxLaunchMode::SystemdUser for systemd
 //!     let auto = AutoLaunch::new(app_name, app_path, LinuxLaunchMode::XdgAutostart, args);
 //!
 //!     // enable the auto launch
@@ -32,9 +32,11 @@
 //!
 //! ### macOS
 //!
-//! macOS supports two ways to achieve auto launch:
-//! - **Launch Agent**: Uses plist files in `~/Library/LaunchAgents/` (default)
+//! macOS supports four ways to achieve auto launch:
+//! - **Launch Agent (User)**: Uses plist files in `~/Library/LaunchAgents/` (default)
+//! - **Launch Agent (System)**: Uses plist files in `/Library/LaunchAgents/`
 //! - **AppleScript**: Uses AppleScript to add login items
+//! - **SMAppService**: Uses the SMAppService API (macOS 13+)
 //!
 //! **Note**:
 //! - The `app_path` should be a absolute path and exists. Otherwise, it will cause an error when `enable`.
@@ -52,7 +54,7 @@
 //!     let args = &["--minimized"];
 //!     let bundle_identifiers = &["com.github.auto-launch-test"];
 //!     // Use Launch Agent by default, or use MacOSLaunchMode::AppleScript
-//!     let auto = AutoLaunch::new(app_name, app_path, MacOSLaunchMode::LaunchAgent, args, bundle_identifiers, "");
+//!     let auto = AutoLaunch::new(app_name, app_path, MacOSLaunchMode::LaunchAgentUser, args, bundle_identifiers, "");
 //!
 //!     // enable the auto launch
 //!     auto.enable().is_ok();
@@ -109,7 +111,7 @@
 //! let auto = AutoLaunchBuilder::new()
 //!     .set_app_name("the-app")
 //!     .set_app_path("/path/to/the-app")
-//!     .set_macos_launch_mode(MacOSLaunchMode::LaunchAgent)
+//!     .set_macos_launch_mode(MacOSLaunchMode::LaunchAgentUser)
 //!     .set_args(&["--minimized"])
 //!     .build()?;
 //!
@@ -135,6 +137,10 @@ pub enum Error {
     AppPathIsNotAbsolute(std::path::PathBuf),
     #[error("Failed to execute apple script with status: {0}")]
     AppleScriptFailed(i32),
+    #[error("Failed to register app with SMAppService with status: {0}")]
+    SMAppServiceRegistrationFailed(u32),
+    #[error("Failed to unregister app with SMAppService with status: {0}")]
+    SMAppServiceUnregistrationFailed(u32),
     #[error("Unsupported target os")]
     UnsupportedOS,
     #[error(transparent)]
@@ -174,7 +180,7 @@ mod windows;
 /// # use auto_launcher::{AutoLaunch, MacOSLaunchMode};
 /// # let app_name = "the-app";
 /// # let app_path = "/path/to/the-app";
-/// # let launch_mode = MacOSLaunchMode::LaunchAgent;
+/// # let launch_mode = MacOSLaunchMode::LaunchAgentUser;
 /// # let args = &["--minimized"];
 /// # let bundle_identifiers = &["com.github.auto-launch-test"];
 /// AutoLaunch::new(app_name, app_path, launch_mode, args, bundle_identifiers, "");
@@ -210,7 +216,7 @@ pub struct AutoLaunch {
     pub(crate) launch_mode: LinuxLaunchMode,
 
     #[cfg(target_os = "macos")]
-    /// Launch mode for macOS (Launch Agent or AppleScript)
+    /// Launch mode for macOS (Launch Agent, AppleScript, or SMAppService)
     pub(crate) launch_mode: MacOSLaunchMode,
 
     #[cfg(target_os = "macos")]
@@ -276,7 +282,7 @@ impl AutoLaunch {
 /// let auto = AutoLaunchBuilder::new()
 ///     .set_app_name("the-app")
 ///     .set_app_path("/path/to/the-app")
-///     .set_macos_launch_mode(MacOSLaunchMode::LaunchAgent)
+///     .set_macos_launch_mode(MacOSLaunchMode::LaunchAgentUser)
 ///     .set_args(&["--minimized"])
 ///     .build()?;
 ///
@@ -312,7 +318,9 @@ pub enum LinuxLaunchMode {
     /// Use XDG Autostart (.desktop file in ~/.config/autostart/)
     XdgAutostart,
     /// Use systemd user service (~/.config/systemd/user/)
-    Systemd,
+    SystemdUser,
+    /// Use systemd system service (/etc/systemd/system/)
+    SystemdSystem,
 }
 
 impl Default for LinuxLaunchMode {
@@ -321,19 +329,38 @@ impl Default for LinuxLaunchMode {
     }
 }
 
+impl LinuxLaunchMode {
+    #[deprecated(since = "0.6.0", note = "Use `LinuxLaunchMode::SystemdUser` instead")]
+    #[allow(non_upper_case_globals)]
+    pub const Systemd: Self = Self::SystemdUser;
+}
+
 /// Determines how the auto launch is enabled on macOS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MacOSLaunchMode {
     /// Use Launch Agent (plist file in ~/Library/LaunchAgents/)
-    LaunchAgent,
+    LaunchAgentUser,
+    /// Use Launch Agent (plist file in /Library/LaunchAgents/)
+    LaunchAgentSystem,
     /// Use AppleScript to add login item
     AppleScript,
+    /// User SMAppService API to enable the auto launch (macOS 13+)
+    SMAppService,
 }
 
 impl Default for MacOSLaunchMode {
     fn default() -> Self {
-        Self::LaunchAgent
+        Self::LaunchAgentUser
     }
+}
+
+impl MacOSLaunchMode {
+    #[deprecated(
+        since = "0.6.0",
+        note = "Use `MacOSLaunchMode::LaunchAgentUser` instead"
+    )]
+    #[allow(non_upper_case_globals)]
+    pub const LaunchAgent: Self = Self::LaunchAgentUser;
 }
 
 /// Determines how the auto launch is enabled on Windows.
@@ -383,7 +410,7 @@ impl AutoLaunchBuilder {
     #[deprecated(since = "0.6.0", note = "Use `set_macos_launch_mode` instead")]
     pub fn set_use_launch_agent(&mut self, use_launch_agent: bool) -> &mut Self {
         self.macos_launch_mode = if use_launch_agent {
-            MacOSLaunchMode::LaunchAgent
+            MacOSLaunchMode::LaunchAgentUser
         } else {
             MacOSLaunchMode::AppleScript
         };
@@ -437,8 +464,34 @@ impl AutoLaunchBuilder {
     /// - `app_path` is none
     /// - Unsupported target OS
     pub fn build(&self) -> Result<AutoLaunch> {
-        let app_name = self.app_name.as_ref().ok_or(Error::AppNameNotSpecified)?;
-        let app_path = self.app_path.as_ref().ok_or(Error::AppPathNotSpecified)?;
+        let default_str = String::new();
+        /*
+         * When SMAppService is used, app_name and app_path are ignored. This
+         * is because the SMAppService API is used to register the running app.
+         *
+         * We also need to check whether the os version is compatible with SMAppService.
+         */
+        let (app_name, app_path) = if self.macos_launch_mode == MacOSLaunchMode::SMAppService {
+            let info = os_info::get();
+            match info.version() {
+                os_info::Version::Semantic(major, _, _) => {
+                    if *major < 13 {
+                        return Err(Error::UnsupportedOS);
+                    }
+                }
+                _ => return Err(Error::UnsupportedOS),
+            };
+
+            (
+                self.app_name.as_ref().unwrap_or(&default_str),
+                self.app_path.as_ref().unwrap_or(&default_str),
+            )
+        } else {
+            (
+                self.app_name.as_ref().ok_or(Error::AppNameNotSpecified)?,
+                self.app_path.as_ref().ok_or(Error::AppPathNotSpecified)?,
+            )
+        };
         let args = self.args.clone().unwrap_or_default();
         let bundle_identifiers = self.bundle_identifiers.clone().unwrap_or_default();
         let agent_extra_config = self.agent_extra_config.as_ref().map_or("", |v| v);
