@@ -330,7 +330,7 @@ impl Default for LinuxLaunchMode {
 }
 
 impl LinuxLaunchMode {
-    #[deprecated(since = "0.6.0", note = "Use `LinuxLaunchMode::SystemdUser` instead")]
+    #[deprecated(since = "1.0.0", note = "Use `LinuxLaunchMode::SystemdUser` instead")]
     #[allow(non_upper_case_globals)]
     pub const Systemd: Self = Self::SystemdUser;
 }
