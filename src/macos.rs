@@ -1,8 +1,8 @@
 use crate::{AutoLaunch, Error, MacOSLaunchMode, Result};
+use plist::{Dictionary, Value};
 use smappservice_rs::{AppService, ServiceStatus, ServiceType};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -14,8 +14,8 @@ impl AutoLaunch {
     /// - `app_path`: application path
     /// - `launch_mode`: launch mode (Launch Agent, AppleScript, or SMAppService)
     /// - `args`: startup args passed to the binary
-    /// - `bundle_identifiers`: bundle identifiers
-    /// - `agent_extra_config`: extra config for Launch Agent
+    /// - `bundle_identifiers`: bundle identifiers (only used for LaunchAgent modes)
+    /// - `agent_extra_config`: extra config for Launch Agent / Launch Daemon (unused currently)
     ///
     /// ## Notes
     ///
@@ -73,15 +73,15 @@ impl AutoLaunch {
     /// - `app_path` does not exist
     /// - `app_path` is not absolute
     ///
-    /// #### Launch Agent
+    /// #### LaunchAgent / LaunchDaemon
     ///
-    /// - failed to create dir `~/Library/LaunchAgents`
-    /// - failed to create file `~/Library/LaunchAgents/{app_name}.plist`
-    /// - failed to write bytes to the file
+    /// - failed to create the plist directory
+    /// - failed to serialize or write the plist file
     ///
     /// #### AppleScript
     ///
     /// - failed to execute the `osascript` command, check the exit status or stderr for details
+    ///
     /// #### SMAppService
     ///
     /// - failed to register app with SMAppService API (macOS 13+)
@@ -105,38 +105,35 @@ impl AutoLaunch {
         }
 
         match self.launch_mode {
-            MacOSLaunchMode::LaunchAgentUser
-            | MacOSLaunchMode::LaunchAgentSystem
-            | MacOSLaunchMode::LaunchDaemonSystem => self.enable_launch_agent(),
+            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => {
+                self.write_plist(build_launch_agent_plist(
+                    &self.app_name,
+                    &self.app_path,
+                    &self.args,
+                    &self.bundle_identifiers,
+                ))
+            }
+            MacOSLaunchMode::LaunchDaemonSystem => {
+                self.write_plist(build_launch_daemon_plist(
+                    &self.app_name,
+                    &self.app_path,
+                    &self.args,
+                ))
+            }
             MacOSLaunchMode::AppleScript => self.enable_applescript(),
             MacOSLaunchMode::SMAppService => unreachable!("SMAppService mode handled above"),
         }
     }
 
-    /// Enable using Launch Agent or Launch Daemon
-    fn enable_launch_agent(&self) -> Result<()> {
+    /// Write a plist `Dictionary` to the appropriate file path.
+    fn write_plist(&self, dict: Dictionary) -> Result<()> {
         let dir = get_dir(self.launch_mode)?;
         if !dir.exists() {
             fs::create_dir_all(&dir)?;
         }
-
-        let data = if self.launch_mode == MacOSLaunchMode::LaunchDaemonSystem {
-            build_launch_daemon_plist(
-                &self.app_name,
-                &self.app_path,
-                &self.args,
-                &self.agent_extra_config,
-            )
-        } else {
-            build_launch_agent_plist(
-                &self.app_name,
-                &self.app_path,
-                &self.args,
-                &self.bundle_identifiers,
-                &self.agent_extra_config,
-            )
-        };
-        let _ = fs::File::create(self.get_file()?)?.write(data.as_bytes())?;
+        let file = self.get_file()?;
+        let f = fs::File::create(file)?;
+        plist::to_writer_xml(f, &Value::Dictionary(dict))?;
         Ok(())
     }
 
@@ -165,13 +162,14 @@ impl AutoLaunch {
     ///
     /// ## Errors
     ///
-    /// #### Launch Agent
+    /// #### LaunchAgent / LaunchDaemon
     ///
-    /// - failed to remove file `~/Library/LaunchAgents/{app_name}.plist`
+    /// - failed to remove the plist file
     ///
     /// #### AppleScript
     ///
     /// - failed to execute the `osascript` command, check the exit status or stderr for details
+    ///
     /// #### SMAppService
     ///
     /// - failed to unregister app with SMAppService API (macOS 13+)
@@ -179,7 +177,7 @@ impl AutoLaunch {
         match self.launch_mode {
             MacOSLaunchMode::LaunchAgentUser
             | MacOSLaunchMode::LaunchAgentSystem
-            | MacOSLaunchMode::LaunchDaemonSystem => self.disable_launch_agent(),
+            | MacOSLaunchMode::LaunchDaemonSystem => self.disable_plist(),
             MacOSLaunchMode::AppleScript => self.disable_applescript(),
             MacOSLaunchMode::SMAppService => self.disable_smappservice(),
         }
@@ -194,8 +192,8 @@ impl AutoLaunch {
         }
     }
 
-    /// Disable Launch Agent
-    fn disable_launch_agent(&self) -> Result<()> {
+    /// Remove the plist file (used by both LaunchAgent and LaunchDaemon modes)
+    fn disable_plist(&self) -> Result<()> {
         let file = self.get_file()?;
         if file.exists() {
             fs::remove_file(file)?;
@@ -210,15 +208,10 @@ impl AutoLaunch {
         if !output.status.success() {
             return Err(Error::AppleScriptFailed(output.status.code().unwrap_or(1)));
         }
-
         Ok(())
     }
 
     /// Check whether the AutoLaunch setting is enabled
-    ///
-    /// #### SMAppService
-    ///
-    /// - Check if the app is registered with SMAppService
     pub fn is_enabled(&self) -> Result<bool> {
         match self.launch_mode {
             MacOSLaunchMode::LaunchAgentUser
@@ -251,17 +244,15 @@ impl AutoLaunch {
         Ok(enable)
     }
 
-    /// get the plist file path
+    /// Get the plist file path for the current launch mode
     fn get_file(&self) -> Result<PathBuf> {
         Ok(get_dir(self.launch_mode)?.join(format!("{}.plist", self.app_name)))
     }
 }
 
-/// Get the Launch Agent/Daemon dir.
+/// Return the directory where the plist file should be placed.
 fn get_dir(mode: MacOSLaunchMode) -> Result<PathBuf> {
     match mode {
-        MacOSLaunchMode::LaunchAgentSystem => Ok(PathBuf::from("/Library/LaunchAgents")),
-        MacOSLaunchMode::LaunchDaemonSystem => Ok(PathBuf::from("/Library/LaunchDaemons")),
         MacOSLaunchMode::LaunchAgentUser => {
             let home_dir = dirs::home_dir().ok_or_else(|| {
                 std::io::Error::new(
@@ -271,8 +262,10 @@ fn get_dir(mode: MacOSLaunchMode) -> Result<PathBuf> {
             })?;
             Ok(home_dir.join("Library").join("LaunchAgents"))
         }
+        MacOSLaunchMode::LaunchAgentSystem => Ok(PathBuf::from("/Library/LaunchAgents")),
+        MacOSLaunchMode::LaunchDaemonSystem => Ok(PathBuf::from("/Library/LaunchDaemons")),
         MacOSLaunchMode::AppleScript | MacOSLaunchMode::SMAppService => {
-            unreachable!("mode does not use LaunchAgents/LaunchDaemons dir")
+            unreachable!("AppleScript/SMAppService do not use a plist directory")
         }
     }
 }
@@ -286,76 +279,63 @@ fn exec_apple_script(cmd_suffix: &str) -> Result<Output> {
     Ok(output)
 }
 
-/// Build plist for LaunchAgent (user or system).
-/// Includes `AssociatedBundleIdentifiers` which is LaunchAgent-specific.
+/// Build a plist `Dictionary` for a **LaunchAgent** (user or system).
+///
+/// LaunchAgent-specific fields:
+/// - `AssociatedBundleIdentifiers`: links this agent to an app bundle for display in
+///   System Settings > General > Login Items. Not supported by LaunchDaemon.
+///
+/// The plist is written to `~/Library/LaunchAgents/` (user) or
+/// `/Library/LaunchAgents/` (system). The process runs as the **logged-in user**.
 fn build_launch_agent_plist(
     app_name: &str,
     app_path: &str,
     args: &[String],
     bundle_identifiers: &[String],
-    agent_extra_config: &str,
-) -> String {
-    build_plist_internal(app_name, app_path, args, Some(bundle_identifiers), agent_extra_config)
+) -> Dictionary {
+    let mut program_args: Vec<Value> = vec![Value::String(app_path.into())];
+    program_args.extend(args.iter().map(|a| Value::String(a.clone())));
+
+    let mut dict = Dictionary::new();
+    dict.insert("Label".into(), Value::String(app_name.into()));
+
+    // AssociatedBundleIdentifiers: LaunchAgent-only — links agent to an app bundle.
+    if !bundle_identifiers.is_empty() {
+        let ids: Vec<Value> = bundle_identifiers
+            .iter()
+            .map(|id| Value::String(id.clone()))
+            .collect();
+        dict.insert(
+            "AssociatedBundleIdentifiers".into(),
+            Value::Array(ids),
+        );
+    }
+
+    dict.insert("ProgramArguments".into(), Value::Array(program_args));
+    dict.insert("RunAtLoad".into(), Value::Boolean(true));
+    dict
 }
 
-/// Build plist for LaunchDaemon (system, runs as root).
-/// Does NOT include `AssociatedBundleIdentifiers` (LaunchAgent-only key).
-/// Adds `SessionCreate=true` so the daemon gets its own security session.
-fn build_launch_daemon_plist(
-    app_name: &str,
-    app_path: &str,
-    args: &[String],
-    agent_extra_config: &str,
-) -> String {
-    let extra = if agent_extra_config.is_empty() {
-        "<key>SessionCreate</key>\n        <true/>".to_string()
-    } else {
-        format!("<key>SessionCreate</key>\n        <true/>\n        {agent_extra_config}")
-    };
-    build_plist_internal(app_name, app_path, args, None, &extra)
-}
+/// Build a plist `Dictionary` for a **LaunchDaemon** (system-level, runs as root).
+///
+/// Key differences from LaunchAgent:
+/// - No `AssociatedBundleIdentifiers` (unsupported by launchd for daemons).
+/// - `SessionCreate = true`: gives the daemon its own security session, required
+///   for accessing system services (e.g. Keychain, audio) without a user session.
+///
+/// The plist is written to `/Library/LaunchDaemons/`. Writing that directory
+/// and loading the daemon both require **root / sudo** privileges.
+fn build_launch_daemon_plist(app_name: &str, app_path: &str, args: &[String]) -> Dictionary {
+    let mut program_args: Vec<Value> = vec![Value::String(app_path.into())];
+    program_args.extend(args.iter().map(|a| Value::String(a.clone())));
 
-fn build_plist_internal(
-    app_name: &str,
-    app_path: &str,
-    args: &[String],
-    bundle_identifiers: Option<&[String]>,
-    agent_extra_config: &str,
-) -> String {
-    let mut full_args = vec![app_path.to_string()];
-    full_args.extend_from_slice(args);
-
-    let section = full_args
-        .iter()
-        .map(|x| format!("<string>{x}</string>"))
-        .collect::<String>();
-
-    let identifiers_block = match bundle_identifiers {
-        Some(ids) if !ids.is_empty() => {
-            let identifiers = ids
-                .iter()
-                .map(|x| format!("<string>{x}</string>"))
-                .collect::<String>();
-            format!("<key>AssociatedBundleIdentifiers</key>\n        <array>{identifiers}</array>\n        ")
-        }
-        _ => String::new(),
-    };
-
-    let extra_config = if !agent_extra_config.is_empty() {
-        format!("{agent_extra_config}\n        ")
-    } else {
-        String::new()
-    };
-
-    format!(
-        "{}\n{}\n<plist version=\"1.0\">\n    <dict>\n        <key>Label</key>\n        <string>{}</string>\n        {}<key>ProgramArguments</key>\n        <array>{}</array>\n        <key>RunAtLoad</key>\n        <true/>\n        {}</dict>\n</plist>",
-        r#"<?xml version="1.0" encoding="UTF-8"?>"#,
-        r#"<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#,
-        app_name,
-        identifiers_block,
-        section,
-        extra_config
-    )
+    let mut dict = Dictionary::new();
+    dict.insert("Label".into(), Value::String(app_name.into()));
+    dict.insert("ProgramArguments".into(), Value::Array(program_args));
+    dict.insert("RunAtLoad".into(), Value::Boolean(true));
+    // SessionCreate: LaunchDaemon-specific — creates a security session for the daemon.
+    dict.insert("SessionCreate".into(), Value::Boolean(true));
+    dict
 }
 
 #[cfg(test)]
@@ -364,42 +344,49 @@ mod tests {
 
     #[test]
     fn test_build_launch_agent_plist() {
-        let data = build_launch_agent_plist(
+        let dict = build_launch_agent_plist(
             "TestApp",
             "/Applications/TestApp.app",
             &["--flag".into()],
             &["com.example.testapp".into()],
-            "<key>KeepAlive</key><true/>",
         );
 
-        assert!(data.contains("<key>Label</key>"));
-        assert!(data.contains("<string>TestApp</string>"));
-        assert!(data.contains("<key>AssociatedBundleIdentifiers</key>"));
-        assert!(data.contains("<string>com.example.testapp</string>"));
-        assert!(data.contains("<key>ProgramArguments</key>"));
-        assert!(data.contains("<string>/Applications/TestApp.app</string>"));
-        assert!(data.contains("<string>--flag</string>"));
-        assert!(data.contains("<key>RunAtLoad</key>"));
-        assert!(data.contains("<key>KeepAlive</key><true/>"));
+        // Serialize to XML for assertion
+        let mut buf = Vec::new();
+        plist::to_writer_xml(&mut buf, &Value::Dictionary(dict)).unwrap();
+        let xml = String::from_utf8(buf).unwrap();
+
+        assert!(xml.contains("<string>TestApp</string>"));
+        assert!(xml.contains("AssociatedBundleIdentifiers"));
+        assert!(xml.contains("<string>com.example.testapp</string>"));
+        assert!(xml.contains("<string>/Applications/TestApp.app</string>"));
+        assert!(xml.contains("<string>--flag</string>"));
+        assert!(xml.contains("RunAtLoad"));
+        assert!(xml.contains("<true/>"));
+        // Agent must NOT have SessionCreate
+        assert!(!xml.contains("SessionCreate"));
     }
 
     #[test]
     fn test_build_launch_daemon_plist() {
-        let data = build_launch_daemon_plist(
+        let dict = build_launch_daemon_plist(
             "TestDaemon",
             "/usr/local/bin/test-daemon",
             &["--flag".into()],
-            "",
         );
 
-        assert!(data.contains("<key>Label</key>"));
-        assert!(data.contains("<string>TestDaemon</string>"));
+        let mut buf = Vec::new();
+        plist::to_writer_xml(&mut buf, &Value::Dictionary(dict)).unwrap();
+        let xml = String::from_utf8(buf).unwrap();
+
+        assert!(xml.contains("<string>TestDaemon</string>"));
+        assert!(xml.contains("<string>/usr/local/bin/test-daemon</string>"));
+        assert!(xml.contains("<string>--flag</string>"));
+        assert!(xml.contains("RunAtLoad"));
+        assert!(xml.contains("<true/>"));
         // Daemon must NOT have AssociatedBundleIdentifiers
-        assert!(!data.contains("<key>AssociatedBundleIdentifiers</key>"));
-        assert!(data.contains("<key>ProgramArguments</key>"));
-        assert!(data.contains("<string>/usr/local/bin/test-daemon</string>"));
-        assert!(data.contains("<string>--flag</string>"));
-        assert!(data.contains("<key>RunAtLoad</key>"));
-        assert!(data.contains("<key>SessionCreate</key>"));
+        assert!(!xml.contains("AssociatedBundleIdentifiers"));
+        // Daemon MUST have SessionCreate
+        assert!(xml.contains("SessionCreate"));
     }
 }
