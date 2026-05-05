@@ -391,7 +391,7 @@ mod linux_unit_test {
 
         assert_eq!(auto2.get_app_name(), app_name);
         // Note: systemd tests may require systemctl to be available
-        if let Ok(_) = auto2.enable() {
+        if auto2.enable().is_ok() {
             assert!(auto2.is_enabled().unwrap());
             auto2.disable().unwrap();
             assert!(!auto2.is_enabled().unwrap());

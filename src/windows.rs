@@ -107,12 +107,11 @@ impl AutoLaunch {
         // try to delete both admin and current user registry values
         if let Err(error) = self.disable_as_admin() {
             if error.code() == E_ACCESSDENIED {
-                match self.enable_mode {
-                    // Fail if our enable mode is system but we don't have the access
-                    WindowsEnableMode::System => return Err(std::io::Error::from(error).into()),
-                    // Otherwise ignore this error
-                    _ => {}
+                // Fail if our enable mode is system but we don't have the access
+                if self.enable_mode == WindowsEnableMode::System {
+                    return Err(std::io::Error::from(error).into());
                 }
+                // Otherwise ignore this error
             } else {
                 return Err(std::io::Error::from(error).into());
             }
