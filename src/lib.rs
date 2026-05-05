@@ -32,9 +32,10 @@
 //!
 //! ### macOS
 //!
-//! macOS supports four ways to achieve auto launch:
+//! macOS supports five ways to achieve auto launch:
 //! - **Launch Agent (User)**: Uses plist files in `~/Library/LaunchAgents/` (default)
-//! - **Launch Agent (System)**: Uses plist files in `/Library/LaunchAgents/`
+//! - **Launch Agent (System)**: Uses plist files in `/Library/LaunchAgents/` (runs as the logged-in user)
+//! - **Launch Daemon (System)**: Uses plist files in `/Library/LaunchDaemons/` (runs as root)
 //! - **AppleScript**: Uses AppleScript to add login items
 //! - **SMAppService**: Uses the SMAppService API (macOS 13+)
 //!
@@ -338,13 +339,19 @@ impl LinuxLaunchMode {
 /// Determines how the auto launch is enabled on macOS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MacOSLaunchMode {
-    /// Use Launch Agent (plist file in ~/Library/LaunchAgents/)
+    /// Use Launch Agent (plist file in ~/Library/LaunchAgents/).
+    /// Runs as the current user. No elevated privileges required.
     LaunchAgentUser,
-    /// Use Launch Agent (plist file in /Library/LaunchAgents/)
+    /// Use Launch Agent (plist file in /Library/LaunchAgents/).
+    /// Visible to all users, but still runs as the logged-in user (not root).
+    /// Writing to /Library/LaunchAgents/ requires root/sudo.
     LaunchAgentSystem,
-    /// Use AppleScript to add login item
+    /// Use Launch Daemon (plist file in /Library/LaunchDaemons/).
+    /// Runs as root (system-level). Writing to /Library/LaunchDaemons/ requires root/sudo.
+    LaunchDaemonSystem,
+    /// Use AppleScript to add login item.
     AppleScript,
-    /// User SMAppService API to enable the auto launch (macOS 13+)
+    /// Use SMAppService API to enable the auto launch (macOS 13+).
     SMAppService,
 }
 

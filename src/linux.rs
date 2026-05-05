@@ -68,7 +68,7 @@ impl AutoLaunch {
     /// Enable using systemd service
     fn enable_systemd(&self) -> Result<()> {
         // Create systemd service file content
-        let data = build_systemd_service_data(&self.app_name, &self.app_path, &self.args);
+        let data = build_systemd_service_data(&self.app_name, &self.app_path, &self.args, self.launch_mode);
 
         // Create systemd directory
         let dir = get_systemd_dir(self.launch_mode)?;
@@ -90,6 +90,16 @@ impl AutoLaunch {
             .truncate(true)
             .open(&service_file)?;
         file.write_all(data.as_bytes())?;
+
+        // Reload systemd daemon so it picks up the new service file
+        let daemon_reload_args: &[&str] = match self.launch_mode {
+            LinuxLaunchMode::SystemdUser => &["--user", "daemon-reload"],
+            LinuxLaunchMode::SystemdSystem => &["daemon-reload"],
+            LinuxLaunchMode::XdgAutostart => unreachable!("XDG mode does not use systemctl"),
+        };
+        let _ = std::process::Command::new("systemctl")
+            .args(daemon_reload_args)
+            .output();
 
         // Enable and start the service using systemctl
         self.systemctl_enable()?;
@@ -253,17 +263,23 @@ fn build_xdg_autostart_data(app_name: &str, app_path: &str, args: &[String]) -> 
     )
 }
 
-fn build_systemd_service_data(app_name: &str, app_path: &str, args: &[String]) -> String {
+fn build_systemd_service_data(app_name: &str, app_path: &str, args: &[String], mode: LinuxLaunchMode) -> String {
     let args_str = if args.is_empty() {
         String::new()
     } else {
         format!(" {}", args.join(" "))
     };
 
+    // system services should target multi-user.target; user services use default.target
+    let wanted_by = match mode {
+        LinuxLaunchMode::SystemdSystem => "multi-user.target",
+        _ => "default.target",
+    };
+
     format!(
         "[Unit]\n\
         Description={}\n\
-        After=default.target\n\
+        After={}\n\
         \n\
         [Service]\n\
         Type=simple\n\
@@ -272,8 +288,8 @@ fn build_systemd_service_data(app_name: &str, app_path: &str, args: &[String]) -
         RestartSec=10\n\
         \n\
         [Install]\n\
-        WantedBy=default.target",
-        app_name, app_path, args_str
+        WantedBy={}",
+        app_name, wanted_by, app_path, args_str, wanted_by
     )
 }
 
@@ -327,12 +343,20 @@ mod tests {
 
     #[test]
     fn test_build_systemd_service_data() {
-        let data = build_systemd_service_data("TestApp", "/opt/test-app", &vec!["--flag".into()]);
+        let data = build_systemd_service_data("TestApp", "/opt/test-app", &vec!["--flag".into()], LinuxLaunchMode::SystemdUser);
 
         assert!(data.contains("Description=TestApp"));
         assert!(data.contains("After=default.target"));
         assert!(data.contains("ExecStart=/opt/test-app --flag"));
         assert!(data.contains("Restart=on-failure"));
         assert!(data.contains("WantedBy=default.target"));
+    }
+
+    #[test]
+    fn test_build_systemd_service_data_system() {
+        let data = build_systemd_service_data("TestApp", "/opt/test-app", &vec!["--flag".into()], LinuxLaunchMode::SystemdSystem);
+
+        assert!(data.contains("After=multi-user.target"));
+        assert!(data.contains("WantedBy=multi-user.target"));
     }
 }

@@ -74,11 +74,12 @@ fn main() {
 
 ### macOS
 
-macOS supports three ways to achieve auto launch:
-- **Launch Agent (user)**: Uses plist files in `~/Library/LaunchAgents/` (default)
-- **Launch Agent (system)**: Uses plist files in `/Library/LaunchAgents/`
-- **AppleScript**: Uses AppleScript to add login items
-- **SMAppService**: Uses the SMAppService API (macOS 13+)
+macOS supports five ways to achieve auto launch:
+- **Launch Agent (user)**: Uses plist files in `~/Library/LaunchAgents/` (default). Runs as the current user.
+- **Launch Agent (system)**: Uses plist files in `/Library/LaunchAgents/`. Visible to all users, but **still runs as the logged-in user** (not root). Requires root/sudo to write.
+- **Launch Daemon (system)**: Uses plist files in `/Library/LaunchDaemons/`. **Runs as root**. Requires root/sudo to write.
+- **AppleScript**: Uses AppleScript to add login items.
+- **SMAppService**: Uses the SMAppService API (macOS 13+).
 
 **Note**:
 
@@ -86,6 +87,7 @@ macOS supports three ways to achieve auto launch:
 - In case using AppleScript, the `app_name` should be same as the basename of `app_path`, or it will be corrected automatically.
 - In case using AppleScript, only `--hidden` and `--minimized` in `args` are valid, which means that hide the app on launch.
 - In case using SMAppService, `app_name` and `app_path` can be empty strings because it registers the running app.
+- `LaunchAgentSystem` and `LaunchDaemonSystem` both require the process to have root/sudo privileges when calling `enable`/`disable`.
 
 ```rust
 use auto_launcher::{AutoLaunch, MacOSLaunchMode};
@@ -94,11 +96,14 @@ fn main() {
     let app_name = "the-app";
     let app_path = "/path/to/the-app.app";
     
-    // Use Launch Agent for current user (default method)
+    // Use Launch Agent for current user (default, no elevated privileges needed)
     let auto = AutoLaunch::new(app_name, app_path, MacOSLaunchMode::LaunchAgentUser, &[] as &[&str], &[] as &[&str], "");
 
-    // Or use Launch Agent for all users
+    // Or use Launch Agent for all users (runs as logged-in user, requires root to register)
     // let auto = AutoLaunch::new(app_name, app_path, MacOSLaunchMode::LaunchAgentSystem, &[] as &[&str], &[] as &[&str], "");
+
+    // Or use Launch Daemon (runs as root, requires root to register)
+    // let auto = AutoLaunch::new(app_name, app_path, MacOSLaunchMode::LaunchDaemonSystem, &[] as &[&str], &[] as &[&str], "");
     
     // Or use AppleScript
     // let auto = AutoLaunch::new(app_name, app_path, MacOSLaunchMode::AppleScript, &[] as &[&str], &[] as &[&str], "");
