@@ -105,9 +105,9 @@ impl AutoLaunch {
         }
 
         match self.launch_mode {
-            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => {
-                self.enable_launch_agent()
-            }
+            MacOSLaunchMode::LaunchAgentUser
+            | MacOSLaunchMode::LaunchAgentSystem
+            | MacOSLaunchMode::LaunchDaemonSystem => self.enable_launch_agent(),
             MacOSLaunchMode::AppleScript => self.enable_applescript(),
             MacOSLaunchMode::SMAppService => unreachable!("SMAppService mode handled above"),
         }
@@ -168,9 +168,9 @@ impl AutoLaunch {
     /// - failed to unregister app with SMAppService API (macOS 13+)
     pub fn disable(&self) -> Result<()> {
         match self.launch_mode {
-            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => {
-                self.disable_launch_agent()
-            }
+            MacOSLaunchMode::LaunchAgentUser
+            | MacOSLaunchMode::LaunchAgentSystem
+            | MacOSLaunchMode::LaunchDaemonSystem => self.disable_launch_agent(),
             MacOSLaunchMode::AppleScript => self.disable_applescript(),
             MacOSLaunchMode::SMAppService => self.disable_smappservice(),
         }
@@ -212,9 +212,9 @@ impl AutoLaunch {
     /// - Check if the app is registered with SMAppService
     pub fn is_enabled(&self) -> Result<bool> {
         match self.launch_mode {
-            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => {
-                Ok(self.get_file()?.exists())
-            }
+            MacOSLaunchMode::LaunchAgentUser
+            | MacOSLaunchMode::LaunchAgentSystem
+            | MacOSLaunchMode::LaunchDaemonSystem => Ok(self.get_file()?.exists()),
             MacOSLaunchMode::AppleScript => self.is_applescript_enabled(),
             MacOSLaunchMode::SMAppService => self.is_smappservice_enabled(),
         }
@@ -248,10 +248,11 @@ impl AutoLaunch {
     }
 }
 
-/// Get the Launch Agent Dir.
+/// Get the Launch Agent/Daemon dir.
 fn get_dir(mode: MacOSLaunchMode) -> Result<PathBuf> {
     match mode {
         MacOSLaunchMode::LaunchAgentSystem => Ok(PathBuf::from("/Library/LaunchAgents")),
+        MacOSLaunchMode::LaunchDaemonSystem => Ok(PathBuf::from("/Library/LaunchDaemons")),
         MacOSLaunchMode::LaunchAgentUser => {
             let home_dir = dirs::home_dir().ok_or_else(|| {
                 std::io::Error::new(
@@ -262,7 +263,7 @@ fn get_dir(mode: MacOSLaunchMode) -> Result<PathBuf> {
             Ok(home_dir.join("Library").join("LaunchAgents"))
         }
         MacOSLaunchMode::AppleScript | MacOSLaunchMode::SMAppService => {
-            unreachable!("mode does not use LaunchAgents dir")
+            unreachable!("mode does not use LaunchAgents/LaunchDaemons dir")
         }
     }
 }
