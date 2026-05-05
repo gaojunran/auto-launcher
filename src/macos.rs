@@ -113,20 +113,29 @@ impl AutoLaunch {
         }
     }
 
-    /// Enable using Launch Agent
+    /// Enable using Launch Agent or Launch Daemon
     fn enable_launch_agent(&self) -> Result<()> {
         let dir = get_dir(self.launch_mode)?;
         if !dir.exists() {
             fs::create_dir_all(&dir)?;
         }
 
-        let data = build_launch_agent_plist(
-            &self.app_name,
-            &self.app_path,
-            &self.args,
-            &self.bundle_identifiers,
-            &self.agent_extra_config,
-        );
+        let data = if self.launch_mode == MacOSLaunchMode::LaunchDaemonSystem {
+            build_launch_daemon_plist(
+                &self.app_name,
+                &self.app_path,
+                &self.args,
+                &self.agent_extra_config,
+            )
+        } else {
+            build_launch_agent_plist(
+                &self.app_name,
+                &self.app_path,
+                &self.args,
+                &self.bundle_identifiers,
+                &self.agent_extra_config,
+            )
+        };
         let _ = fs::File::create(self.get_file()?)?.write(data.as_bytes())?;
         Ok(())
     }
@@ -277,11 +286,40 @@ fn exec_apple_script(cmd_suffix: &str) -> Result<Output> {
     Ok(output)
 }
 
+/// Build plist for LaunchAgent (user or system).
+/// Includes `AssociatedBundleIdentifiers` which is LaunchAgent-specific.
 fn build_launch_agent_plist(
     app_name: &str,
     app_path: &str,
     args: &[String],
     bundle_identifiers: &[String],
+    agent_extra_config: &str,
+) -> String {
+    build_plist_internal(app_name, app_path, args, Some(bundle_identifiers), agent_extra_config)
+}
+
+/// Build plist for LaunchDaemon (system, runs as root).
+/// Does NOT include `AssociatedBundleIdentifiers` (LaunchAgent-only key).
+/// Adds `SessionCreate=true` so the daemon gets its own security session.
+fn build_launch_daemon_plist(
+    app_name: &str,
+    app_path: &str,
+    args: &[String],
+    agent_extra_config: &str,
+) -> String {
+    let extra = if agent_extra_config.is_empty() {
+        "<key>SessionCreate</key>\n        <true/>".to_string()
+    } else {
+        format!("<key>SessionCreate</key>\n        <true/>\n        {agent_extra_config}")
+    };
+    build_plist_internal(app_name, app_path, args, None, &extra)
+}
+
+fn build_plist_internal(
+    app_name: &str,
+    app_path: &str,
+    args: &[String],
+    bundle_identifiers: Option<&[String]>,
     agent_extra_config: &str,
 ) -> String {
     let mut full_args = vec![app_path.to_string()];
@@ -292,36 +330,29 @@ fn build_launch_agent_plist(
         .map(|x| format!("<string>{x}</string>"))
         .collect::<String>();
 
-    let identifiers = bundle_identifiers
-        .iter()
-        .map(|x| format!("<string>{x}</string>"))
-        .collect::<String>();
+    let identifiers_block = match bundle_identifiers {
+        Some(ids) if !ids.is_empty() => {
+            let identifiers = ids
+                .iter()
+                .map(|x| format!("<string>{x}</string>"))
+                .collect::<String>();
+            format!("<key>AssociatedBundleIdentifiers</key>\n        <array>{identifiers}</array>\n        ")
+        }
+        _ => String::new(),
+    };
 
     let extra_config = if !agent_extra_config.is_empty() {
-        format!("{agent_extra_config}\n  ")
+        format!("{agent_extra_config}\n        ")
     } else {
         String::new()
     };
 
     format!(
-        "{}\n{}\n\
-        <plist version=\"1.0\">\n  \
-        <dict>\n  \
-            <key>Label</key>\n  \
-            <string>{}</string>\n  \
-            <key>AssociatedBundleIdentifiers</key>\n  \
-            <array>{}</array>\n  \
-            <key>ProgramArguments</key>\n  \
-            <array>{}</array>\n  \
-            <key>RunAtLoad</key>\n  \
-            <true/>\n  \
-            {}\
-        </dict>\n\
-        </plist>",
+        "{}\n{}\n<plist version=\"1.0\">\n    <dict>\n        <key>Label</key>\n        <string>{}</string>\n        {}<key>ProgramArguments</key>\n        <array>{}</array>\n        <key>RunAtLoad</key>\n        <true/>\n        {}</dict>\n</plist>",
         r#"<?xml version="1.0" encoding="UTF-8"?>"#,
         r#"<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#,
         app_name,
-        identifiers,
+        identifiers_block,
         section,
         extra_config
     )
@@ -350,5 +381,25 @@ mod tests {
         assert!(data.contains("<string>--flag</string>"));
         assert!(data.contains("<key>RunAtLoad</key>"));
         assert!(data.contains("<key>KeepAlive</key><true/>"));
+    }
+
+    #[test]
+    fn test_build_launch_daemon_plist() {
+        let data = build_launch_daemon_plist(
+            "TestDaemon",
+            "/usr/local/bin/test-daemon",
+            &["--flag".into()],
+            "",
+        );
+
+        assert!(data.contains("<key>Label</key>"));
+        assert!(data.contains("<string>TestDaemon</string>"));
+        // Daemon must NOT have AssociatedBundleIdentifiers
+        assert!(!data.contains("<key>AssociatedBundleIdentifiers</key>"));
+        assert!(data.contains("<key>ProgramArguments</key>"));
+        assert!(data.contains("<string>/usr/local/bin/test-daemon</string>"));
+        assert!(data.contains("<string>--flag</string>"));
+        assert!(data.contains("<key>RunAtLoad</key>"));
+        assert!(data.contains("<key>SessionCreate</key>"));
     }
 }
