@@ -133,7 +133,8 @@ impl AutoLaunch {
         }
         let file = self.get_file()?;
         let f = fs::File::create(file)?;
-        plist::to_writer_xml(f, &Value::Dictionary(dict))?;
+        plist::to_writer_xml(f, &Value::Dictionary(dict))
+            .map_err(|e| std::io::Error::other(e))?;
         Ok(())
     }
 
