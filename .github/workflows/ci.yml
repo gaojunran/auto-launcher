@@ -7,7 +7,7 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-  test:
+  ci:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -19,18 +19,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup mise
+        uses: jdx/mise-action@v4
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run cargo check
-        run: cargo check
-
-      - name: Run cargo test
-        run: |
-          cd test-exe
-          cargo build --release
-          cd ..
-          cargo test -- --nocapture
+      - name: Run CI tasks
+        run: mise run ci

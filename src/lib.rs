@@ -314,20 +314,15 @@ pub struct AutoLaunchBuilder {
 }
 
 /// Determines how the auto launch is enabled on Linux.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LinuxLaunchMode {
     /// Use XDG Autostart (.desktop file in ~/.config/autostart/)
+    #[default]
     XdgAutostart,
     /// Use systemd user service (~/.config/systemd/user/)
     SystemdUser,
     /// Use systemd system service (/etc/systemd/system/)
     SystemdSystem,
-}
-
-impl Default for LinuxLaunchMode {
-    fn default() -> Self {
-        Self::XdgAutostart
-    }
 }
 
 impl LinuxLaunchMode {
@@ -337,10 +332,11 @@ impl LinuxLaunchMode {
 }
 
 /// Determines how the auto launch is enabled on macOS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MacOSLaunchMode {
     /// Use Launch Agent (plist file in ~/Library/LaunchAgents/).
     /// Runs as the current user. No elevated privileges required.
+    #[default]
     LaunchAgentUser,
     /// Use Launch Agent (plist file in /Library/LaunchAgents/).
     /// Visible to all users, but still runs as the logged-in user (not root).
@@ -355,12 +351,6 @@ pub enum MacOSLaunchMode {
     SMAppService,
 }
 
-impl Default for MacOSLaunchMode {
-    fn default() -> Self {
-        Self::LaunchAgentUser
-    }
-}
-
 impl MacOSLaunchMode {
     #[deprecated(
         since = "0.6.0",
@@ -371,21 +361,16 @@ impl MacOSLaunchMode {
 }
 
 /// Determines how the auto launch is enabled on Windows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowsEnableMode {
     /// Dynamically tries to enable the auto launch for the system (admin privileges required),
     /// fallbacks to the current user if there is no permission to modify the system registry.
+    #[default]
     Dynamic,
     /// Enables the auto launch for the current user only. Does not require admin permissions.
     CurrentUser,
     /// Enables the auto launch for all users. Requires admin permissions.
     System,
-}
-
-impl Default for WindowsEnableMode {
-    fn default() -> Self {
-        Self::Dynamic
-    }
 }
 
 impl AutoLaunchBuilder {
@@ -467,6 +452,7 @@ impl AutoLaunchBuilder {
     ///
     /// ## Errors
     ///
+    #[allow(clippy::needless_return)]
     /// - `app_name` is none
     /// - `app_path` is none
     /// - Unsupported target OS
@@ -500,8 +486,6 @@ impl AutoLaunchBuilder {
             )
         };
         let args = self.args.clone().unwrap_or_default();
-        let bundle_identifiers = self.bundle_identifiers.clone().unwrap_or_default();
-        let agent_extra_config = self.agent_extra_config.as_ref().map_or("", |v| v);
 
         #[cfg(target_os = "linux")]
         return Ok(AutoLaunch::new(
@@ -511,14 +495,18 @@ impl AutoLaunchBuilder {
             &args,
         ));
         #[cfg(target_os = "macos")]
-        return Ok(AutoLaunch::new(
-            app_name,
-            app_path,
-            self.macos_launch_mode,
-            &args,
-            &bundle_identifiers,
-            agent_extra_config,
-        ));
+        {
+            let bundle_identifiers = self.bundle_identifiers.clone().unwrap_or_default();
+            let agent_extra_config = self.agent_extra_config.as_ref().map_or("", |v| v);
+            return Ok(AutoLaunch::new(
+                app_name,
+                app_path,
+                self.macos_launch_mode,
+                &args,
+                &bundle_identifiers,
+                agent_extra_config,
+            ));
+        }
         #[cfg(target_os = "windows")]
         return Ok(AutoLaunch::new(
             app_name,

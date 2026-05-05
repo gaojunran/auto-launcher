@@ -20,6 +20,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup mise
+        uses: jdx/mise-action@v4
+
       - name: Determine version bump type
         id: bump
         run: |
@@ -30,30 +33,12 @@ jobs:
             echo "type=patch" >> $GITHUB_OUTPUT
           fi
 
-      - name: Calculate new version
+      - name: Bump version
         id: version
         run: |
-          CURRENT_VERSION=$(grep -m 1 '^version = ' Cargo.toml | sed 's/version = "$.*$"/\1/')
-          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-
-          BUMP_TYPE="${{ steps.bump.outputs.type }}"
-          if [[ "$BUMP_TYPE" == "minor" ]]; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          elif [[ "$BUMP_TYPE" == "patch" ]]; then
-            PATCH=$((PATCH + 1))
-          fi
-
-          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          NEW_VERSION=$(bun scripts/bump-version.js ${{ steps.bump.outputs.type }})
           echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "Current version: $CURRENT_VERSION, New version: $NEW_VERSION"
-
-      - name: Update Cargo.toml version
-        run: |
-          sed -i "s/^version = \".*\"/version = \"${{ steps.version.outputs.new }}\"/" Cargo.toml
-          cat Cargo.toml | head -5
+          echo "New version: $NEW_VERSION"
 
       - name: Commit and push version bump
         run: |

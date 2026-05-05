@@ -105,21 +105,18 @@ impl AutoLaunch {
         }
 
         match self.launch_mode {
-            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => {
-                self.write_plist(build_launch_agent_plist(
+            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => self
+                .write_plist(build_launch_agent_plist(
                     &self.app_name,
                     &self.app_path,
                     &self.args,
                     &self.bundle_identifiers,
-                ))
-            }
-            MacOSLaunchMode::LaunchDaemonSystem => {
-                self.write_plist(build_launch_daemon_plist(
-                    &self.app_name,
-                    &self.app_path,
-                    &self.args,
-                ))
-            }
+                )),
+            MacOSLaunchMode::LaunchDaemonSystem => self.write_plist(build_launch_daemon_plist(
+                &self.app_name,
+                &self.app_path,
+                &self.args,
+            )),
             MacOSLaunchMode::AppleScript => self.enable_applescript(),
             MacOSLaunchMode::SMAppService => unreachable!("SMAppService mode handled above"),
         }
@@ -133,8 +130,7 @@ impl AutoLaunch {
         }
         let file = self.get_file()?;
         let f = fs::File::create(file)?;
-        plist::to_writer_xml(f, &Value::Dictionary(dict))
-            .map_err(|e| std::io::Error::other(e))?;
+        plist::to_writer_xml(f, &Value::Dictionary(dict)).map_err(std::io::Error::other)?;
         Ok(())
     }
 
@@ -306,10 +302,7 @@ fn build_launch_agent_plist(
             .iter()
             .map(|id| Value::String(id.clone()))
             .collect();
-        dict.insert(
-            "AssociatedBundleIdentifiers".into(),
-            Value::Array(ids),
-        );
+        dict.insert("AssociatedBundleIdentifiers".into(), Value::Array(ids));
     }
 
     dict.insert("ProgramArguments".into(), Value::Array(program_args));

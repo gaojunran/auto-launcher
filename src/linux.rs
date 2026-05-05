@@ -68,7 +68,12 @@ impl AutoLaunch {
     /// Enable using systemd service
     fn enable_systemd(&self) -> Result<()> {
         // Create systemd service file content
-        let data = build_systemd_service_data(&self.app_name, &self.app_path, &self.args, self.launch_mode);
+        let data = build_systemd_service_data(
+            &self.app_name,
+            &self.app_path,
+            &self.args,
+            self.launch_mode,
+        );
 
         // Create systemd directory
         let dir = get_systemd_dir(self.launch_mode)?;
@@ -120,13 +125,10 @@ impl AutoLaunch {
             .output()?;
 
         if !output.status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Failed to enable systemd service: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            )
+            return Err(std::io::Error::other(format!(
+                "Failed to enable systemd service: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
             .into());
         }
 
@@ -195,11 +197,8 @@ impl AutoLaunch {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stderr.contains("No such file or directory") && !stderr.contains("not loaded") {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to disable systemd service: {}", stderr),
-                )
-                .into());
+                let err_msg = format!("Failed to disable systemd service: {}", stderr);
+                return Err(std::io::Error::other(err_msg).into());
             }
         }
 
@@ -263,7 +262,12 @@ fn build_xdg_autostart_data(app_name: &str, app_path: &str, args: &[String]) -> 
     )
 }
 
-fn build_systemd_service_data(app_name: &str, app_path: &str, args: &[String], mode: LinuxLaunchMode) -> String {
+fn build_systemd_service_data(
+    app_name: &str,
+    app_path: &str,
+    args: &[String],
+    mode: LinuxLaunchMode,
+) -> String {
     let args_str = if args.is_empty() {
         String::new()
     } else {
@@ -330,7 +334,7 @@ mod tests {
         let data = build_xdg_autostart_data(
             "TestApp",
             "/opt/test-app",
-            &vec!["--flag".into(), "value".into()],
+            &["--flag".into(), "value".into()],
         );
 
         assert!(data.contains("Type=Application"));
@@ -343,7 +347,12 @@ mod tests {
 
     #[test]
     fn test_build_systemd_service_data() {
-        let data = build_systemd_service_data("TestApp", "/opt/test-app", &vec!["--flag".into()], LinuxLaunchMode::SystemdUser);
+        let data = build_systemd_service_data(
+            "TestApp",
+            "/opt/test-app",
+            &["--flag".into()],
+            LinuxLaunchMode::SystemdUser,
+        );
 
         assert!(data.contains("Description=TestApp"));
         assert!(data.contains("After=default.target"));
@@ -354,7 +363,12 @@ mod tests {
 
     #[test]
     fn test_build_systemd_service_data_system() {
-        let data = build_systemd_service_data("TestApp", "/opt/test-app", &vec!["--flag".into()], LinuxLaunchMode::SystemdSystem);
+        let data = build_systemd_service_data(
+            "TestApp",
+            "/opt/test-app",
+            &["--flag".into()],
+            LinuxLaunchMode::SystemdSystem,
+        );
 
         assert!(data.contains("After=multi-user.target"));
         assert!(data.contains("WantedBy=multi-user.target"));
