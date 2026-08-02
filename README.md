@@ -163,8 +163,10 @@ This is useful for detecting stale registrations after a package-manager upgrade
 match auto.get_registered_app_path() {
     Ok(Some(registered)) => {
         if registered != current_bin {
-            auto.disable()?;
-            auto.enable()?; // overwrites with the current app_path
+            // enable() overwrites the on-disk file with the current app_path.
+            // No need to disable() first — calling enable() directly ensures
+            // that if it fails, the stale registration is still present.
+            auto.enable()?;
         }
     }
     Ok(None) => { /* not registered */ }
