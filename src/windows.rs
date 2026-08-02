@@ -142,6 +142,24 @@ impl AutoLaunch {
         }
     }
 
+    /// Read the registered `app_path` from the registry.
+    ///
+    /// Returns `Ok(None)` when no registration exists in either HKLM or HKCU.
+    /// The registry stores `"<app_path> <args...>"` as a single string; this
+    /// method extracts the first whitespace-delimited token (the binary path).
+    pub fn get_registered_app_path(&self) -> Result<Option<String>> {
+        for root_key in [LOCAL_MACHINE, CURRENT_USER] {
+            if let Ok(value) = root_key
+                .open(AL_REGKEY)
+                .and_then(|key| key.get_string(&self.app_name))
+            {
+                let path = value.split_whitespace().next().map(|s| s.to_string());
+                return Ok(path);
+            }
+        }
+        Ok(None)
+    }
+
     /// Check whether the AutoLaunch setting is enabled
     pub fn is_enabled(&self) -> Result<bool> {
         let is_registered =

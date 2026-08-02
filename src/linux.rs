@@ -234,6 +234,40 @@ impl AutoLaunch {
         Ok(output.status.success())
     }
 
+    /// Read the registered `app_path` from the on-disk service/desktop file.
+    ///
+    /// Returns `Ok(None)` when the registration does not exist.
+    /// For systemd, extracts the binary from the `ExecStart=` line.
+    /// For XDG autostart, extracts it from the `Exec=` line.
+    pub fn get_registered_app_path(&self) -> Result<Option<String>> {
+        let file = match self.launch_mode {
+            LinuxLaunchMode::XdgAutostart => self.get_xdg_desktop_file()?,
+            LinuxLaunchMode::SystemdUser | LinuxLaunchMode::SystemdSystem => {
+                self.get_systemd_service_file()?
+            }
+        };
+        if !file.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(file)?;
+        let key = match self.launch_mode {
+            LinuxLaunchMode::XdgAutostart => "Exec=",
+            _ => "ExecStart=",
+        };
+        let path = content
+            .lines()
+            .find_map(|line| {
+                let trimmed = line.trim();
+                trimmed.strip_prefix(key).map(|rest| {
+                    // ExecStart=/path/to/bin arg1 arg2
+                    // Take the first whitespace-delimited token.
+                    rest.split_whitespace().next().map(|s| s.to_string())
+                })
+            })
+            .flatten();
+        Ok(path)
+    }
+
     /// Get the XDG desktop entry file path
     fn get_xdg_desktop_file(&self) -> Result<PathBuf> {
         Ok(get_xdg_autostart_dir()?.join(format!("{}.desktop", self.app_name)))
