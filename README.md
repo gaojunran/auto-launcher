@@ -153,6 +153,25 @@ fn main() {
 }
 ```
 
+## Reading back the registered path
+
+`get_registered_app_path()` reads the binary path from the on-disk registration file (plist / systemd unit / registry). Returns `Ok(None)` when no registration exists.
+
+This is useful for detecting stale registrations after a package-manager upgrade — e.g. [pitchfork](https://github.com/jdx/pitchfork) uses it to auto-heal boot registrations on supervisor startup ([jdx/pitchfork#707](https://github.com/jdx/pitchfork/pull/707)):
+
+```rust
+match auto.get_registered_app_path() {
+    Ok(Some(registered)) => {
+        if registered != current_bin {
+            auto.disable()?;
+            auto.enable()?; // overwrites with the current app_path
+        }
+    }
+    Ok(None) => { /* not registered */ }
+    Err(e) => { /* read failed */ }
+}
+```
+
 ## License
 
 MIT License. See the [License](./LICENSE) file for details.
