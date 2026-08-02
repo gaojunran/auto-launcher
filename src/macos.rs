@@ -241,6 +241,36 @@ impl AutoLaunch {
         Ok(enable)
     }
 
+    /// Read the registered `app_path` from the on-disk plist file.
+    ///
+    /// Returns `Ok(None)` when the registration does not exist.
+    /// Returns `Ok(Some(path))` with the first element of `ProgramArguments`.
+    ///
+    /// AppleScript and SMAppService modes do not store a path on disk and
+    /// always return `Ok(None)`.
+    pub fn get_registered_app_path(&self) -> Result<Option<String>> {
+        match self.launch_mode {
+            MacOSLaunchMode::LaunchAgentUser
+            | MacOSLaunchMode::LaunchAgentSystem
+            | MacOSLaunchMode::LaunchDaemonSystem => {
+                let file = self.get_file()?;
+                if !file.exists() {
+                    return Ok(None);
+                }
+                let value: Value = plist::from_file(&file).map_err(std::io::Error::other)?;
+                let path = value
+                    .as_dictionary()
+                    .and_then(|d| d.get("ProgramArguments"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|args| args.first())
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.to_string());
+                Ok(path)
+            }
+            MacOSLaunchMode::AppleScript | MacOSLaunchMode::SMAppService => Ok(None),
+        }
+    }
+
     /// Get the plist file path for the current launch mode
     fn get_file(&self) -> Result<PathBuf> {
         Ok(get_dir(self.launch_mode)?.join(format!("{}.plist", self.app_name)))
