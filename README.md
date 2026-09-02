@@ -162,8 +162,9 @@ This is useful for detecting stale registrations after a package-manager upgrade
 ```rust
 match auto.get_registered_app_path() {
     Ok(Some(registered)) => {
-        if registered != current_bin {
-            // enable() overwrites the on-disk file with the current app_path.
+        if registered != current_bin && auto.is_registration_owned()? {
+            // enable() overwrites the on-disk file with the current app_path,
+            // but only when the registration was created by this library.
             // No need to disable() first — calling enable() directly ensures
             // that if it fails, the stale registration is still present.
             auto.enable()?;
@@ -173,6 +174,29 @@ match auto.get_registered_app_path() {
     Err(e) => { /* read failed */ }
 }
 ```
+
+## Managed registrations
+
+Since 1.2.0, `enable()` writes a **managed marker** alongside the registration:
+
+| Platform | Marker |
+|---|---|
+| Linux (systemd unit / XDG desktop entry) | a `# Managed by {name}. Manual edits will be overwritten.` comment line at the top of the file |
+| macOS | a `ManagedBy` key in the plist (launchd ignores unknown keys) |
+| Windows | a `managed = "1"` value at `SOFTWARE\auto-launcher\{name}` |
+
+`{name}` is the app name passed to `AutoLaunch`/`AutoLaunchBuilder`, and falls
+back to `auto-launcher` when empty. Markers are matched by **prefix**, so future
+versions may extend the text without breaking recognition of old registrations.
+
+[`is_registration_owned()`](https://docs.rs/auto-launcher) reports whether the
+existing registration was created by this library. Registrations without the
+marker — hand-written systemd units, for example — are considered manually
+managed and produce `false`.
+
+`enable()` refuses to overwrite a manually managed registration and returns
+[`Error::RegistrationNotOwned`](https://docs.rs/auto-launcher). Use
+`enable_force()` to take over such a registration.
 
 ## License
 

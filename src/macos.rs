@@ -68,8 +68,14 @@ impl AutoLaunch {
 
     /// Enable the AutoLaunch setting
     ///
+    /// Refuses to overwrite an existing registration that was not created by
+    /// this library (see [`Self::is_registration_owned`]); use
+    /// [`Self::enable_force`] to take over such a registration.
+    ///
     /// ## Errors
     ///
+    /// - [`crate::Error::RegistrationNotOwned`]: a non-library plist file
+    ///   exists at the registration path
     /// - `app_path` does not exist
     /// - `app_path` is not absolute
     ///
@@ -86,6 +92,39 @@ impl AutoLaunch {
     ///
     /// - failed to register app with SMAppService API (macOS 13+)
     pub fn enable(&self) -> Result<()> {
+        self.enable_with_force(false)
+    }
+
+    /// Like [`Self::enable`], but unconditionally overwrites any existing
+    /// registration, including manually managed files.
+    pub fn enable_force(&self) -> Result<()> {
+        self.enable_with_force(true)
+    }
+
+    /// Whether the existing registration was created by this library.
+    ///
+    /// Checks the `ManagedBy` marker key written by this library into the
+    /// plist (launchd ignores unknown keys). A missing file returns `false`.
+    ///
+    /// AppleScript and SMAppService modes have no on-disk registration
+    /// a user could edit, so they always report `true`.
+    pub fn is_registration_owned(&self) -> Result<bool> {
+        match self.launch_mode {
+            MacOSLaunchMode::LaunchAgentUser
+            | MacOSLaunchMode::LaunchAgentSystem
+            | MacOSLaunchMode::LaunchDaemonSystem => {
+                let file = self.get_file()?;
+                if !file.exists() {
+                    return Ok(false);
+                }
+                let value: Value = plist::from_file(&file).map_err(std::io::Error::other)?;
+                Ok(plist_managed_by(&value, &self.managed_marker()))
+            }
+            MacOSLaunchMode::AppleScript | MacOSLaunchMode::SMAppService => Ok(true),
+        }
+    }
+
+    fn enable_with_force(&self, force: bool) -> Result<()> {
         if self.launch_mode == MacOSLaunchMode::SMAppService {
             let app_service = AppService::new(ServiceType::MainApp);
             match app_service.register() {
@@ -105,21 +144,44 @@ impl AutoLaunch {
         }
 
         match self.launch_mode {
-            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => self
-                .write_plist(build_launch_agent_plist(
+            MacOSLaunchMode::LaunchAgentUser | MacOSLaunchMode::LaunchAgentSystem => {
+                if !force && self.is_plist_not_owned()? {
+                    return Err(Error::RegistrationNotOwned(self.get_file()?));
+                }
+                self.write_plist(build_launch_agent_plist(
                     &self.app_name,
                     &self.app_path,
                     &self.args,
                     &self.bundle_identifiers,
-                )),
-            MacOSLaunchMode::LaunchDaemonSystem => self.write_plist(build_launch_daemon_plist(
-                &self.app_name,
-                &self.app_path,
-                &self.args,
-            )),
+                    &self.managed_marker(),
+                ))
+            }
+            MacOSLaunchMode::LaunchDaemonSystem => {
+                if !force && self.is_plist_not_owned()? {
+                    return Err(Error::RegistrationNotOwned(self.get_file()?));
+                }
+                self.write_plist(build_launch_daemon_plist(
+                    &self.app_name,
+                    &self.app_path,
+                    &self.args,
+                    &self.managed_marker(),
+                ))
+            }
             MacOSLaunchMode::AppleScript => self.enable_applescript(),
             MacOSLaunchMode::SMAppService => unreachable!("SMAppService mode handled above"),
         }
+    }
+
+    /// Whether the registration file exists but was not created by this library.
+    fn is_plist_not_owned(&self) -> Result<bool> {
+        let file = self.get_file()?;
+        if !file.exists() {
+            return Ok(false);
+        }
+        Ok(!plist_managed_by(
+            &plist::from_file(&file).map_err(std::io::Error::other)?,
+            &self.managed_marker(),
+        ))
     }
 
     /// Write a plist `Dictionary` to the appropriate file path.
@@ -319,12 +381,17 @@ fn build_launch_agent_plist(
     app_path: &str,
     args: &[String],
     bundle_identifiers: &[String],
+    managed_marker: &str,
 ) -> Dictionary {
     let mut program_args: Vec<Value> = vec![Value::String(app_path.into())];
     program_args.extend(args.iter().map(|a| Value::String(a.clone())));
 
     let mut dict = Dictionary::new();
     dict.insert("Label".into(), Value::String(app_name.into()));
+
+    // ManagedBy: ownership marker used by is_registration_owned().
+    // launchd ignores unknown keys, so this key is safe to include.
+    dict.insert("ManagedBy".into(), Value::String(managed_marker.into()));
 
     // AssociatedBundleIdentifiers: LaunchAgent-only — links agent to an app bundle.
     if !bundle_identifiers.is_empty() {
@@ -349,17 +416,36 @@ fn build_launch_agent_plist(
 ///
 /// The plist is written to `/Library/LaunchDaemons/`. Writing that directory
 /// and loading the daemon both require **root / sudo** privileges.
-fn build_launch_daemon_plist(app_name: &str, app_path: &str, args: &[String]) -> Dictionary {
+fn build_launch_daemon_plist(
+    app_name: &str,
+    app_path: &str,
+    args: &[String],
+    managed_marker: &str,
+) -> Dictionary {
     let mut program_args: Vec<Value> = vec![Value::String(app_path.into())];
     program_args.extend(args.iter().map(|a| Value::String(a.clone())));
 
     let mut dict = Dictionary::new();
     dict.insert("Label".into(), Value::String(app_name.into()));
+    // ManagedBy: ownership marker used by is_registration_owned().
+    // launchd ignores unknown keys, so this key is safe to include.
+    dict.insert("ManagedBy".into(), Value::String(managed_marker.into()));
     dict.insert("ProgramArguments".into(), Value::Array(program_args));
     dict.insert("RunAtLoad".into(), Value::Boolean(true));
     // SessionCreate: LaunchDaemon-specific — creates a security session for the daemon.
     dict.insert("SessionCreate".into(), Value::Boolean(true));
     dict
+}
+
+/// Whether the plist carries the library's managed marker, matched by prefix
+/// so future marker extensions stay recognized.
+fn plist_managed_by(value: &Value, managed_marker: &str) -> bool {
+    value
+        .as_dictionary()
+        .and_then(|d| d.get("ManagedBy"))
+        .and_then(|v| v.as_string())
+        .map(|s| s.starts_with(managed_marker))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -373,6 +459,7 @@ mod tests {
             "/Applications/TestApp.app",
             &["--flag".into()],
             &["com.example.testapp".into()],
+            "Managed by TestApp",
         );
 
         // Serialize to XML for assertion
@@ -385,6 +472,8 @@ mod tests {
         assert!(xml.contains("<string>com.example.testapp</string>"));
         assert!(xml.contains("<string>/Applications/TestApp.app</string>"));
         assert!(xml.contains("<string>--flag</string>"));
+        assert!(xml.contains("ManagedBy"));
+        assert!(xml.contains("<string>Managed by TestApp</string>"));
         assert!(xml.contains("RunAtLoad"));
         assert!(xml.contains("<true/>"));
         // Agent must NOT have SessionCreate
@@ -397,6 +486,7 @@ mod tests {
             "TestDaemon",
             "/usr/local/bin/test-daemon",
             &["--flag".into()],
+            "Managed by TestDaemon",
         );
 
         let mut buf = Vec::new();
@@ -406,11 +496,47 @@ mod tests {
         assert!(xml.contains("<string>TestDaemon</string>"));
         assert!(xml.contains("<string>/usr/local/bin/test-daemon</string>"));
         assert!(xml.contains("<string>--flag</string>"));
+        assert!(xml.contains("ManagedBy"));
         assert!(xml.contains("RunAtLoad"));
         assert!(xml.contains("<true/>"));
         // Daemon must NOT have AssociatedBundleIdentifiers
         assert!(!xml.contains("AssociatedBundleIdentifiers"));
         // Daemon MUST have SessionCreate
         assert!(xml.contains("SessionCreate"));
+    }
+
+    #[test]
+    fn test_plist_managed_by() {
+        let marker = "Managed by TestApp";
+        let mut dict = Dictionary::new();
+        dict.insert("Label".into(), Value::String("TestApp".into()));
+        dict.insert(
+            "ManagedBy".into(),
+            Value::String("Managed by TestApp".into()),
+        );
+        // library-generated plist: owned
+        assert!(plist_managed_by(&Value::Dictionary(dict.clone()), marker));
+        // future extension of the marker: still owned
+        dict.insert(
+            "ManagedBy".into(),
+            Value::String("Managed by TestApp v2".into()),
+        );
+        assert!(plist_managed_by(&Value::Dictionary(dict), marker));
+
+        // hand-written plist without the key: not owned
+        let mut manual = Dictionary::new();
+        manual.insert("Label".into(), Value::String("TestApp".into()));
+        assert!(!plist_managed_by(&Value::Dictionary(manual), marker));
+
+        // a different app's marker: not owned
+        let mut other = Dictionary::new();
+        other.insert(
+            "ManagedBy".into(),
+            Value::String("Managed by OtherApp".into()),
+        );
+        assert!(!plist_managed_by(&Value::Dictionary(other), marker));
+
+        // non-dictionary value: not owned
+        assert!(!plist_managed_by(&Value::String("x".into()), marker));
     }
 }
