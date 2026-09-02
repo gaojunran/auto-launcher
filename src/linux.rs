@@ -82,7 +82,10 @@ impl AutoLaunch {
     /// Enable using XDG Autostart (.desktop file)
     fn enable_xdg_autostart(&self, force: bool) -> Result<()> {
         let file_path = self.get_xdg_desktop_file()?;
-        if !force && file_path.exists() && !content_is_managed(&fs::read_to_string(&file_path)?, &self.managed_marker()) {
+        if !force
+            && file_path.exists()
+            && !content_is_managed(&fs::read_to_string(&file_path)?, &self.managed_marker())
+        {
             return Err(Error::RegistrationNotOwned(file_path));
         }
         let data = build_xdg_autostart_data(
@@ -114,7 +117,10 @@ impl AutoLaunch {
     /// Enable using systemd service
     fn enable_systemd(&self, force: bool) -> Result<()> {
         let service_file = self.get_systemd_service_file()?;
-        if !force && service_file.exists() && !content_is_managed(&fs::read_to_string(&service_file)?, &self.managed_marker()) {
+        if !force
+            && service_file.exists()
+            && !content_is_managed(&fs::read_to_string(&service_file)?, &self.managed_marker())
+        {
             return Err(Error::RegistrationNotOwned(service_file));
         }
         // Create systemd service file content
@@ -330,7 +336,12 @@ impl AutoLaunch {
     }
 }
 
-fn build_xdg_autostart_data(app_name: &str, app_path: &str, args: &[String], managed_marker: &str) -> String {
+fn build_xdg_autostart_data(
+    app_name: &str,
+    app_path: &str,
+    args: &[String],
+    managed_marker: &str,
+) -> String {
     format!(
         "# {}. Manual edits will be overwritten.\n\
         [Desktop Entry]\n\
@@ -486,11 +497,17 @@ mod tests {
             marker
         ));
         // legacy library content: owned
-        assert!(content_is_managed("[Unit]\n..\n# Managed by TestApp v2 extension\n", marker));
+        assert!(content_is_managed(
+            "[Unit]\n..\n# Managed by TestApp v2 extension\n",
+            marker
+        ));
         // hand-written unit: not owned
         assert!(!content_is_managed("[Unit]\nDescription=x\n", marker));
         // a different app's marker: not owned
-        assert!(!content_is_managed("# Managed by OtherApp. ...\n[Unit]\n", marker));
+        assert!(!content_is_managed(
+            "# Managed by OtherApp. ...\n[Unit]\n",
+            marker
+        ));
         // leading whitespace before the marker is fine
         assert!(content_is_managed("  # Managed by TestApp. ...\n", marker));
         // empty file
