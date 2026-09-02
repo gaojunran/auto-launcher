@@ -110,7 +110,7 @@ impl AutoLaunch {
     /// Whether the library marker exists under the given root key.
     fn marker_exists(&self, root_key: &Key) -> bool {
         root_key
-            .open(&self.marker_regkey())
+            .open(self.marker_regkey())
             .and_then(|key| key.get_string(AL_MARKER_VALUE))
             .is_ok()
     }
@@ -134,7 +134,7 @@ impl AutoLaunch {
             format!("{} {}", self.app_path, self.args.join(" ")),
         )?;
         root_key
-            .create(&self.marker_regkey())?
+            .create(self.marker_regkey())?
             .set_string(AL_MARKER_VALUE, "1")?;
 
         match root_key
@@ -192,7 +192,7 @@ impl AutoLaunch {
     fn disable_with_root_key(&self, root_key: &Key) -> windows_registry::Result<()> {
         // Best-effort removal of the library marker; a leftover empty key is
         // harmless and gets overwritten on the next enable.
-        if let Ok(key) = root_key.open(&self.marker_regkey()) {
+        if let Ok(key) = root_key.open(self.marker_regkey()) {
             let _ = key.remove_value(AL_MARKER_VALUE);
         }
         match root_key
