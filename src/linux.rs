@@ -1,4 +1,4 @@
-use crate::{AutoLaunch, LinuxLaunchMode, Result};
+use crate::{AutoLaunch, Error, LinuxLaunchMode, Result};
 use std::{fs, io::Write, path::PathBuf};
 
 /// Linux implement
@@ -28,22 +28,72 @@ impl AutoLaunch {
 
     /// Enable the AutoLaunch setting
     ///
+    /// Refuses to overwrite an existing registration that was not created by
+    /// this library (see [`Self::is_registration_owned`]); use
+    /// [`Self::enable_force`] to take over such a registration.
+    ///
     /// ## Errors
     ///
+    /// - [`crate::Error::RegistrationNotOwned`]: a non-library file exists at
+    ///   the registration path
     /// - failed to create directory
     /// - failed to create file
     /// - failed to write bytes to the file
     /// - failed to enable systemd service (if using systemd mode)
     pub fn enable(&self) -> Result<()> {
+        self.enable_with_force(false)
+    }
+
+    /// Like [`Self::enable`], but unconditionally overwrites any existing
+    /// registration, including manually managed files.
+    pub fn enable_force(&self) -> Result<()> {
+        self.enable_with_force(true)
+    }
+
+    /// Whether the existing registration was created by this library.
+    ///
+    /// Checks for the `# Managed by ...` marker written by this library
+    /// (marker method below). Files without the marker, e.g. hand-written
+    /// units, are considered manually managed and return `false`. A missing
+    /// file returns `false`.
+    pub fn is_registration_owned(&self) -> Result<bool> {
+        let file = match self.launch_mode {
+            LinuxLaunchMode::XdgAutostart => self.get_xdg_desktop_file()?,
+            LinuxLaunchMode::SystemdUser | LinuxLaunchMode::SystemdSystem => {
+                self.get_systemd_service_file()?
+            }
+        };
+        if !file.exists() {
+            return Ok(false);
+        }
+        let content = fs::read_to_string(file)?;
+        Ok(content_is_managed(&content, &self.managed_marker()))
+    }
+
+    fn enable_with_force(&self, force: bool) -> Result<()> {
         match self.launch_mode {
-            LinuxLaunchMode::XdgAutostart => self.enable_xdg_autostart(),
-            LinuxLaunchMode::SystemdUser | LinuxLaunchMode::SystemdSystem => self.enable_systemd(),
+            LinuxLaunchMode::XdgAutostart => self.enable_xdg_autostart(force),
+            LinuxLaunchMode::SystemdUser | LinuxLaunchMode::SystemdSystem => {
+                self.enable_systemd(force)
+            }
         }
     }
 
     /// Enable using XDG Autostart (.desktop file)
-    fn enable_xdg_autostart(&self) -> Result<()> {
-        let data = build_xdg_autostart_data(&self.app_name, &self.app_path, &self.args);
+    fn enable_xdg_autostart(&self, force: bool) -> Result<()> {
+        let file_path = self.get_xdg_desktop_file()?;
+        if !force
+            && file_path.exists()
+            && !content_is_managed(&fs::read_to_string(&file_path)?, &self.managed_marker())
+        {
+            return Err(Error::RegistrationNotOwned(file_path));
+        }
+        let data = build_xdg_autostart_data(
+            &self.app_name,
+            &self.app_path,
+            &self.args,
+            &self.managed_marker(),
+        );
 
         let dir = get_xdg_autostart_dir()?;
         if !dir.exists() {
@@ -55,7 +105,6 @@ impl AutoLaunch {
                 }
             })?;
         }
-        let file_path = self.get_xdg_desktop_file()?;
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -66,13 +115,21 @@ impl AutoLaunch {
     }
 
     /// Enable using systemd service
-    fn enable_systemd(&self) -> Result<()> {
+    fn enable_systemd(&self, force: bool) -> Result<()> {
+        let service_file = self.get_systemd_service_file()?;
+        if !force
+            && service_file.exists()
+            && !content_is_managed(&fs::read_to_string(&service_file)?, &self.managed_marker())
+        {
+            return Err(Error::RegistrationNotOwned(service_file));
+        }
         // Create systemd service file content
         let data = build_systemd_service_data(
             &self.app_name,
             &self.app_path,
             &self.args,
             self.launch_mode,
+            &self.managed_marker(),
         );
 
         // Create systemd directory
@@ -279,9 +336,15 @@ impl AutoLaunch {
     }
 }
 
-fn build_xdg_autostart_data(app_name: &str, app_path: &str, args: &[String]) -> String {
+fn build_xdg_autostart_data(
+    app_name: &str,
+    app_path: &str,
+    args: &[String],
+    managed_marker: &str,
+) -> String {
     format!(
-        "[Desktop Entry]\n\
+        "# {}. Manual edits will be overwritten.\n\
+        [Desktop Entry]\n\
         Type=Application\n\
         Version=1.0\n\
         Name={}\n\
@@ -289,6 +352,7 @@ fn build_xdg_autostart_data(app_name: &str, app_path: &str, args: &[String]) -> 
         Exec={} {}\n\
         StartupNotify=false\n\
         Terminal=false",
+        managed_marker,
         app_name,
         app_name,
         app_path,
@@ -301,6 +365,7 @@ fn build_systemd_service_data(
     app_path: &str,
     args: &[String],
     mode: LinuxLaunchMode,
+    managed_marker: &str,
 ) -> String {
     let args_str = if args.is_empty() {
         String::new()
@@ -315,7 +380,8 @@ fn build_systemd_service_data(
     };
 
     format!(
-        "[Unit]\n\
+        "# {}. Manual edits will be overwritten.\n\
+        [Unit]\n\
         Description={}\n\
         After={}\n\
         \n\
@@ -327,8 +393,17 @@ fn build_systemd_service_data(
         \n\
         [Install]\n\
         WantedBy={}",
-        app_name, wanted_by, app_path, args_str, wanted_by
+        managed_marker, app_name, wanted_by, app_path, args_str, wanted_by
     )
+}
+
+/// Whether the file content carries the library's managed marker, matched by
+/// prefix so future marker extensions stay recognized.
+fn content_is_managed(content: &str, managed_marker: &str) -> bool {
+    content.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("# ") && line[2..].starts_with(managed_marker)
+    })
 }
 
 /// Get the XDG autostart directory
@@ -369,6 +444,7 @@ mod tests {
             "TestApp",
             "/opt/test-app",
             &["--flag".into(), "value".into()],
+            "Managed by TestApp",
         );
 
         assert!(data.contains("Type=Application"));
@@ -377,6 +453,7 @@ mod tests {
         assert!(data.contains("Exec=/opt/test-app --flag value"));
         assert!(data.contains("StartupNotify=false"));
         assert!(data.contains("Terminal=false"));
+        assert!(data.starts_with("# Managed by TestApp. Manual edits will be overwritten.\n"));
     }
 
     #[test]
@@ -386,6 +463,7 @@ mod tests {
             "/opt/test-app",
             &["--flag".into()],
             LinuxLaunchMode::SystemdUser,
+            "Managed by TestApp",
         );
 
         assert!(data.contains("Description=TestApp"));
@@ -393,6 +471,7 @@ mod tests {
         assert!(data.contains("ExecStart=/opt/test-app --flag"));
         assert!(data.contains("Restart=on-failure"));
         assert!(data.contains("WantedBy=default.target"));
+        assert!(data.starts_with("# Managed by TestApp. Manual edits will be overwritten.\n"));
     }
 
     #[test]
@@ -402,9 +481,36 @@ mod tests {
             "/opt/test-app",
             &["--flag".into()],
             LinuxLaunchMode::SystemdSystem,
+            "Managed by TestApp",
         );
 
         assert!(data.contains("After=multi-user.target"));
         assert!(data.contains("WantedBy=multi-user.target"));
+    }
+
+    #[test]
+    fn test_content_is_managed() {
+        let marker = "Managed by TestApp";
+        // library-generated content: owned
+        assert!(content_is_managed(
+            "# Managed by TestApp. Manual edits will be overwritten.\n[Unit]\n..",
+            marker
+        ));
+        // legacy library content: owned
+        assert!(content_is_managed(
+            "[Unit]\n..\n# Managed by TestApp v2 extension\n",
+            marker
+        ));
+        // hand-written unit: not owned
+        assert!(!content_is_managed("[Unit]\nDescription=x\n", marker));
+        // a different app's marker: not owned
+        assert!(!content_is_managed(
+            "# Managed by OtherApp. ...\n[Unit]\n",
+            marker
+        ));
+        // leading whitespace before the marker is fine
+        assert!(content_is_managed("  # Managed by TestApp. ...\n", marker));
+        // empty file
+        assert!(!content_is_managed("", marker));
     }
 }

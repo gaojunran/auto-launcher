@@ -144,6 +144,12 @@ pub enum Error {
     SMAppServiceUnregistrationFailed(u32),
     #[error("Unsupported target os")]
     UnsupportedOS,
+    #[error(
+        "registration at {0} exists but was not created by auto-launcher; \
+        it is managed manually and will not be overwritten; \
+        use enable_force() to take over"
+    )]
+    RegistrationNotOwned(std::path::PathBuf),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -263,6 +269,29 @@ impl AutoLaunch {
     /// get the args
     pub fn get_args(&self) -> &[String] {
         &self.args
+    }
+
+    /// The name embedded in the managed marker written alongside registrations.
+    /// Falls back to `auto-launcher` when no app name is set.
+    pub(crate) fn managed_name(&self) -> &str {
+        if self.app_name.is_empty() {
+            "auto-launcher"
+        } else {
+            &self.app_name
+        }
+    }
+
+    /// The marker text embedded in registrations written by this library.
+    ///
+    /// Ownership checks match this marker by **prefix**, so future versions may
+    /// extend the marker (e.g. append a version) without breaking recognition
+    /// of older registrations.
+    ///
+    /// Windows registers ownership through a dedicated registry key instead, so
+    /// the marker text is only used on Unix and macOS.
+    #[cfg(not(target_os = "windows"))]
+    pub(crate) fn managed_marker(&self) -> String {
+        format!("Managed by {}", self.managed_name())
     }
 }
 

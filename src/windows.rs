@@ -1,9 +1,15 @@
-use crate::{AutoLaunch, Result, WindowsEnableMode};
+use crate::{AutoLaunch, Error, Result, WindowsEnableMode};
 use std::io;
+use std::path::PathBuf;
 use windows_registry::{Key, CURRENT_USER, LOCAL_MACHINE};
 use windows_result::HRESULT;
 
 const AL_REGKEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+const AL_MARKER_REGKEY: &str = r"SOFTWARE\auto-launcher";
+// Marker value at {AL_MARKER_REGKEY}\{app_name}: marks a registration as
+// written by this library. Lives outside the Run key because every value in
+// the Run key is executed at login; this subtree is never executed.
+const AL_MARKER_VALUE: &str = "managed";
 const TASK_MANAGER_OVERRIDE_REGKEY: &str =
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 const TASK_MANAGER_OVERRIDE_ENABLED_VALUE: [u8; 12] = [
@@ -39,11 +45,49 @@ impl AutoLaunch {
 
     /// Enable the AutoLaunch setting
     ///
+    /// Refuses to overwrite an existing registration that was not created by
+    /// this library (see [`Self::is_registration_owned`]); use
+    /// [`Self::enable_force`] to take over such a registration.
+    ///
     /// ## Errors
     ///
+    /// - [`crate::Error::RegistrationNotOwned`]: a manual Run registration
+    ///   exists without the library marker
     /// - failed to open the registry key
     /// - failed to set value
     pub fn enable(&self) -> Result<()> {
+        self.enable_with_force(false)
+    }
+
+    /// Like [`Self::enable`], but unconditionally overwrites any existing
+    /// registration, including manually managed ones.
+    pub fn enable_force(&self) -> Result<()> {
+        self.enable_with_force(true)
+    }
+
+    /// Whether an existing registration was created by this library.
+    ///
+    /// Checks for the marker value at `SOFTWARE\auto-launcher\{app_name}`
+    /// under HKLM or HKCU. Registrations without the marker, e.g. manually
+    /// added Run entries, return `false`.
+    pub fn is_registration_owned(&self) -> Result<bool> {
+        Ok([LOCAL_MACHINE, CURRENT_USER]
+            .iter()
+            .any(|root| self.marker_exists(root)))
+    }
+
+    fn enable_with_force(&self, force: bool) -> Result<()> {
+        if !force {
+            for (root_name, root_key) in [("HKLM", LOCAL_MACHINE), ("HKCU", CURRENT_USER)] {
+                if let Ok(key) = root_key.open(AL_REGKEY) {
+                    if key.get_string(&self.app_name).is_ok() && !self.marker_exists(root_key) {
+                        return Err(Error::RegistrationNotOwned(PathBuf::from(format!(
+                            r"{root_name}\{AL_REGKEY}"
+                        ))));
+                    }
+                }
+            }
+        }
         match self.enable_mode {
             WindowsEnableMode::Dynamic => self
                 .enable_as_admin()
@@ -63,6 +107,19 @@ impl AutoLaunch {
         Ok(())
     }
 
+    /// Whether the library marker exists under the given root key.
+    fn marker_exists(&self, root_key: &Key) -> bool {
+        root_key
+            .open(self.marker_regkey())
+            .and_then(|key| key.get_string(AL_MARKER_VALUE))
+            .is_ok()
+    }
+
+    /// Registry path of the library marker for this app.
+    fn marker_regkey(&self) -> String {
+        format!(r"{AL_MARKER_REGKEY}\{}", self.managed_name())
+    }
+
     fn enable_as_admin(&self) -> windows_registry::Result<()> {
         self.enable_with_root_key(LOCAL_MACHINE)
     }
@@ -76,6 +133,9 @@ impl AutoLaunch {
             &self.app_name,
             format!("{} {}", self.app_path, self.args.join(" ")),
         )?;
+        root_key
+            .create(self.marker_regkey())?
+            .set_string(AL_MARKER_VALUE, "1")?;
 
         match root_key
             .options()
@@ -130,6 +190,11 @@ impl AutoLaunch {
     }
 
     fn disable_with_root_key(&self, root_key: &Key) -> windows_registry::Result<()> {
+        // Best-effort removal of the library marker; a leftover empty key is
+        // harmless and gets overwritten on the next enable.
+        if let Ok(key) = root_key.open(self.marker_regkey()) {
+            let _ = key.remove_value(AL_MARKER_VALUE);
+        }
         match root_key
             .options()
             .write()
